@@ -125,6 +125,9 @@ export async function getNextAccount(config, selection) {
                         lastUsed: now,
                         limitError: undefined
                     });
+                    // ensureValidToken() awaited network I/O; do not overwrite a token
+                    // another process refreshed while it was pending.
+                    store = loadStore();
                     store.activeAlias = forcedAlias;
                     store.lastRotation = now;
                     saveStore(store);
@@ -282,6 +285,8 @@ export async function getNextAccount(config, selection) {
             lastUsed: now,
             limitError: undefined
         });
+        // ensureValidToken() awaited network I/O; preserve any concurrent refresh.
+        store = loadStore();
         store.activeAlias = candidate;
         store.lastRotation = now;
         const nextIndex = primary.aliases.includes(candidate) ? primary.nextIndex : fallback.nextIndex;

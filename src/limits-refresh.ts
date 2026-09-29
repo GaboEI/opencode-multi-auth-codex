@@ -19,6 +19,8 @@ export interface LimitRefreshResult {
 }
 
 export async function refreshRateLimitsForAccount(account: AccountCredentials): Promise<LimitRefreshResult> {
+  // Queue callers may hold an old snapshot while another process refreshed it.
+  account = loadStore().accounts[account.alias] || account
   updateAccount(account.alias, { limitStatus: 'running', limitError: undefined })
   logInfo(`Refreshing limits for ${account.alias}`)
   const usage = await fetchUsageRateLimitsForAccount(account)

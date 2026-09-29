@@ -178,6 +178,9 @@ export async function getNextAccount(
             lastUsed: now,
             limitError: undefined
           })
+          // ensureValidToken() awaited network I/O; do not overwrite a token
+          // another process refreshed while it was pending.
+          store = loadStore()
           
           store.activeAlias = forcedAlias
           store.lastRotation = now
@@ -349,6 +352,8 @@ export async function getNextAccount(
       lastUsed: now,
       limitError: undefined
     })
+    // ensureValidToken() awaited network I/O; preserve any concurrent refresh.
+    store = loadStore()
 
     store.activeAlias = candidate
     store.lastRotation = now

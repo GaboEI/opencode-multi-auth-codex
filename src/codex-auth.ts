@@ -349,6 +349,14 @@ export function syncCodexAuthFile(): {
   }
 
   if (alias) {
+    // ~/.codex/auth.json is not refreshed by the multi-auth dashboard.
+    const currentAccount = store.accounts[alias]
+    const currentExpires = typeof currentAccount?.expiresAt === 'number' ? currentAccount.expiresAt : 0
+    const incomingExpires = typeof expiresAt === 'number' ? expiresAt : 0
+    if (currentAccount && incomingExpires < currentExpires) {
+      console.warn(`[multi-auth] stale sync skipped (${alias})`)
+      return { alias, added: false, updated: false, authEmail: email, authAccountId: accountId }
+    }
     updateAccount(alias, update)
     return { alias, added: false, updated: true, authEmail: email, authAccountId: accountId }
   }

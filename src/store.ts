@@ -27,6 +27,20 @@ function getStoreFile(): string {
   return path.join(getStoreDir(), DEFAULT_STORE_FILE)
 }
 
+// Return files created under `sudo -E` to the invoking user, so ordinary
+// OpenCode sessions retain access to the shared multi-auth account store.
+function restoreOwnerIfRoot(targetPath: string): void {
+  try {
+    if (typeof process.getuid !== 'function' || process.getuid() !== 0) return
+    const uid = Number.parseInt(process.env.SUDO_UID || '', 10)
+    const gid = Number.parseInt(process.env.SUDO_GID || process.env.SUDO_UID || '', 10)
+    if (!Number.isFinite(uid) || !Number.isFinite(gid)) return
+    fs.chownSync(targetPath, uid, gid)
+  } catch {
+    // Best effort only.
+  }
+}
+
 const STORE_ENV_PASSPHRASE = 'CODEX_SOFT_STORE_PASSPHRASE'
 const CURRENT_STORE_VERSION = 2
 
@@ -67,10 +81,59 @@ let lastStoreEncrypted = false
 let writeLock = false
 let writeLockQueue: Array<() => void> = []
 
+// Cross-process lock: multiple OpenCode processes otherwise race through a
+// read-modify-write cycle and can overwrite newly refreshed credentials.
+const IPC_LOCK_STALE_MS = 15_000
+function getIpcLockDir(): string {
+  return `${getStoreFile()}.lock`
+}
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch {
+    const end = Date.now() + ms
+    while (Date.now() < end) { /* fallback */ }
+  }
+}
+function acquireIpcLock(timeoutMs = 5_000): void {
+  const lockDir = getIpcLockDir()
+  const startedAt = Date.now()
+  for (;;) {
+    try {
+      fs.mkdirSync(lockDir)
+      restoreOwnerIfRoot(lockDir)
+      return
+    } catch (error: any) {
+      if (error?.code !== 'EEXIST') return
+      try {
+        if (Date.now() - fs.statSync(lockDir).mtimeMs > IPC_LOCK_STALE_MS) {
+          fs.rmdirSync(lockDir)
+          continue
+        }
+      } catch {
+        continue
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        console.warn('[multi-auth] IPC lock timeout; proceeding without lock')
+        return
+      }
+      sleepSync(25)
+    }
+  }
+}
+function releaseIpcLock(): void {
+  try { fs.rmdirSync(getIpcLockDir()) } catch { /* ignore */ }
+}
+function withIpcLock<T>(fn: () => T): T {
+  acquireIpcLock()
+  try { return fn() } finally { releaseIpcLock() }
+}
+
 function ensureDir(): void {
   const dir = getStoreDir()
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    restoreOwnerIfRoot(dir)
   }
 }
 
@@ -269,6 +332,7 @@ function saveLastKnownGood(store: AccountStore): void {
   const lkgPath = getLastKnownGoodPath()
   try {
     fs.writeFileSync(lkgPath, JSON.stringify(store, null, 2), { mode: 0o600 })
+    restoreOwnerIfRoot(lkgPath)
   } catch {
     // ignore
   }
@@ -436,6 +500,7 @@ export function saveStore(store: AccountStore): void {
     if (fs.existsSync(file)) {
       fs.copyFileSync(file, `${file}.bak`)
       fs.chmodSync(`${file}.bak`, 0o600)
+      restoreOwnerIfRoot(`${file}.bak`)
     }
   } catch {
     // ignore backup failures
@@ -500,6 +565,7 @@ export function saveStore(store: AccountStore): void {
     // ignore
   }
 
+  restoreOwnerIfRoot(file)
   saveLastKnownGood(store)
 }
 
@@ -530,80 +596,77 @@ export function getStoreDiagnostics(): {
 
 
 export function addAccount(alias: string, creds: Omit<AccountCredentials, 'alias' | 'usageCount'>): AccountStore {
-  const store = loadStore()
-  const entry = buildHistoryEntry(creds.rateLimits)
-  store.accounts[alias] = {
-    ...creds,
-    alias,
-    usageCount: 0,
-    rateLimitHistory: entry ? [entry] : creds.rateLimitHistory
-  }
-  if (!store.activeAlias) {
-    store.activeAlias = alias
-  }
-  saveStore(store)
-  return store
+  return withIpcLock(() => {
+    const store = loadStore()
+    const entry = buildHistoryEntry(creds.rateLimits)
+    store.accounts[alias] = {
+      ...creds,
+      alias,
+      usageCount: 0,
+      rateLimitHistory: entry ? [entry] : creds.rateLimitHistory
+    }
+    if (!store.activeAlias) store.activeAlias = alias
+    saveStore(store)
+    return store
+  })
 }
 
 export function removeAccount(alias: string): AccountStore {
-  const store = loadStore()
-  delete store.accounts[alias]
-  if (store.activeAlias === alias) {
-    const remaining = Object.keys(store.accounts)
-    store.activeAlias = remaining[0] || null
-  }
-  saveStore(store)
-  return store
+  return withIpcLock(() => {
+    const store = loadStore()
+    delete store.accounts[alias]
+    if (store.activeAlias === alias) store.activeAlias = Object.keys(store.accounts)[0] || null
+    saveStore(store)
+    return store
+  })
 }
 
 export function updateAccount(alias: string, updates: Partial<AccountCredentials>): AccountStore {
-  const store = loadStore()
-  if (store.accounts[alias]) {
-    const current = store.accounts[alias]
-    const next = { ...current, ...updates }
-    if (updates.rateLimits || next.rateLimits) {
-      const entry = buildHistoryEntry(next.rateLimits)
-      if (entry) {
-        next.rateLimitHistory = appendHistory(current.rateLimitHistory, entry)
+  return withIpcLock(() => {
+    const store = loadStore()
+    if (store.accounts[alias]) {
+      const current = store.accounts[alias]
+      const next = { ...current, ...updates }
+      if (updates.rateLimits || next.rateLimits) {
+        const entry = buildHistoryEntry(next.rateLimits)
+        if (entry) {
+          next.rateLimitHistory = appendHistory(current.rateLimitHistory, entry)
+        }
       }
+      store.accounts[alias] = next
+      saveStore(store)
     }
-    store.accounts[alias] = next
-    saveStore(store)
-  }
-  return store
+    return store
+  })
 }
 
 export function setActiveAlias(alias: string | null): AccountStore {
-  const store = loadStore()
-  const now = Date.now()
-  const previousAlias = store.activeAlias
-
-  if (alias === null) {
-    store.activeAlias = null
-  } else if (store.accounts[alias]) {
-    if (previousAlias && previousAlias !== alias && store.accounts[previousAlias]) {
-      store.accounts[previousAlias] = {
-        ...store.accounts[previousAlias],
-        lastActiveUntil: now
+  return withIpcLock(() => {
+    const store = loadStore()
+    const now = Date.now()
+    const previousAlias = store.activeAlias
+    if (alias === null) {
+      store.activeAlias = null
+    } else if (store.accounts[alias]) {
+      if (previousAlias && previousAlias !== alias && store.accounts[previousAlias]) {
+        store.accounts[previousAlias] = {
+          ...store.accounts[previousAlias],
+          lastActiveUntil: now
+        }
       }
+      store.activeAlias = alias
+      store.accounts[alias] = {
+        ...store.accounts[alias],
+        lastSeenAt: now,
+        lastActiveUntil: undefined
+      }
+      const idx = Object.keys(store.accounts).indexOf(alias)
+      if (idx >= 0) store.rotationIndex = idx
+      store.lastRotation = now
     }
-
-    store.activeAlias = alias
-    store.accounts[alias] = {
-      ...store.accounts[alias],
-      lastSeenAt: now,
-      lastActiveUntil: undefined
-    }
-
-    const aliases = Object.keys(store.accounts)
-    const idx = aliases.indexOf(alias)
-    if (idx >= 0) {
-      store.rotationIndex = idx
-    }
-    store.lastRotation = now
-  }
-  saveStore(store)
-  return store
+    saveStore(store)
+    return store
+  })
 }
 
 export function getActiveAccount(): AccountCredentials | null {

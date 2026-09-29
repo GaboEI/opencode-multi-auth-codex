@@ -6,6 +6,8 @@ import { logError, logInfo } from './logger.js';
 import { DEFAULT_CONFIG, calculateLimitsConfidence } from './types.js';
 import { fetchUsageRateLimitsForAccount } from './usage-limits.js';
 export async function refreshRateLimitsForAccount(account) {
+    // Queue callers may hold an old snapshot while another process refreshed it.
+    account = loadStore().accounts[account.alias] || account;
     updateAccount(account.alias, { limitStatus: 'running', limitError: undefined });
     logInfo(`Refreshing limits for ${account.alias}`);
     const usage = await fetchUsageRateLimitsForAccount(account);

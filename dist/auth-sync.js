@@ -45,6 +45,19 @@ function buildAlias(email, existingAliases) {
     }
     return candidate;
 }
+// Native OpenCode auth is not refreshed by the multi-auth dashboard. Do not
+// let an older native token overwrite the newer token in accounts.json.
+function updateAccountIfNotStale(alias, updates) {
+    const currentAccount = loadStore().accounts[alias];
+    const incomingExpires = typeof updates.expiresAt === 'number' ? updates.expiresAt : 0;
+    const currentExpires = typeof currentAccount?.expiresAt === 'number' ? currentAccount.expiresAt : 0;
+    if (currentAccount && incomingExpires < currentExpires) {
+        console.warn(`[multi-auth] stale sync skipped (${alias})`);
+        return false;
+    }
+    updateAccount(alias, updates);
+    return true;
+}
 export async function syncAuthFromOpenCode(getAuth) {
     const now = Date.now();
     if (now - lastSyncAt < AUTH_SYNC_COOLDOWN_MS)
@@ -69,7 +82,7 @@ export async function syncAuthFromOpenCode(getAuth) {
     const derivedEmail = getEmailFromClaims(accessClaims);
     const derivedAccountId = getAccountIdFromClaims(accessClaims);
     if (existingAlias) {
-        updateAccount(existingAlias, {
+        updateAccountIfNotStale(existingAlias, {
             accessToken: auth.access,
             refreshToken: auth.refresh,
             expiresAt: auth.expires,
@@ -83,7 +96,7 @@ export async function syncAuthFromOpenCode(getAuth) {
     if (email) {
         const existingByEmail = findAccountAliasByEmail(email, store);
         if (existingByEmail) {
-            updateAccount(existingByEmail, {
+            updateAccountIfNotStale(existingByEmail, {
                 accessToken: auth.access,
                 refreshToken: auth.refresh,
                 expiresAt: auth.expires,
