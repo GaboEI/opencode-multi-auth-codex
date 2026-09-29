@@ -15,7 +15,12 @@ describe('OpenCode 2 plugin entry', () => {
       }
     }
 
-    await plugin.setup(context as any)
+    process.env.OPENCODE_MULTI_AUTH_SKIP_NATIVE_SYNC = '1'
+    try {
+      await plugin.setup(context as any)
+    } finally {
+      delete process.env.OPENCODE_MULTI_AUTH_SKIP_NATIVE_SYNC
+    }
 
     expect(plugin.id).toBe('opencode-multi-auth-codex')
     expect(typeof sdkHook).toBe('function')

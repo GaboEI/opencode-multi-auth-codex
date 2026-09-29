@@ -1,10 +1,14 @@
 import type { Auth } from '@opencode-ai/sdk'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { addAccount, loadStore, updateAccount } from './store.js'
 import { decodeJwtPayload, getAccountIdFromClaims, getEmailFromClaims } from './codex-auth.js'
 import type { AccountCredentials } from './types.js'
 
 const OPENAI_ISSUER = 'https://auth.openai.com'
 const AUTH_SYNC_COOLDOWN_MS = 10_000
+const OPENCODE_AUTH_FILE = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json')
 
 let lastSyncedAccess: string | null = null
 let lastSyncAt = 0
@@ -61,6 +65,50 @@ function updateAccountIfNotStale(alias: string, updates: Partial<AccountCredenti
   }
   updateAccount(alias, updates)
   return true
+}
+
+/**
+ * OpenCode 2 verifies the native OpenAI credential before the AI SDK hook can
+ * replace its fetch. Keep that credential aligned with the active multi-auth
+ * account, but only ever move it forward in expiry time. This complements the
+ * stale-input guards above: native OpenCode auth cannot overwrite the store,
+ * while this function may safely refresh native auth from the newer store.
+ */
+export function syncActiveAccountToOpenCode(): boolean {
+  if (process.env.OPENCODE_MULTI_AUTH_SKIP_NATIVE_SYNC === '1') return false
+
+  const store = loadStore()
+  const account = store.activeAlias ? store.accounts[store.activeAlias] : undefined
+  if (!account?.accessToken || !account.refreshToken || !account.expiresAt) return false
+
+  let auth: Record<string, any> = {}
+  try {
+    if (fs.existsSync(OPENCODE_AUTH_FILE)) auth = JSON.parse(fs.readFileSync(OPENCODE_AUTH_FILE, 'utf8'))
+  } catch {
+    return false
+  }
+
+  const existingExpiry = typeof auth.openai?.expires === 'number' ? auth.openai.expires : 0
+  if (existingExpiry >= account.expiresAt) return false
+
+  const next = {
+    ...auth,
+    openai: {
+      type: 'oauth',
+      access: account.accessToken,
+      refresh: account.refreshToken,
+      expires: account.expiresAt,
+      ...(account.accountId ? { accountId: account.accountId } : {})
+    }
+  }
+  try {
+    const temporary = `${OPENCODE_AUTH_FILE}.multi-auth-${process.pid}-${Date.now()}`
+    fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 })
+    fs.renameSync(temporary, OPENCODE_AUTH_FILE)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function syncAuthFromOpenCode(getAuth: () => Promise<Auth>): Promise<void> {
