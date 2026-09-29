@@ -24,10 +24,10 @@ const plugin = define({
         const legacy = yield* Effect.tryPromise({ try: legacyHooks, catch: (cause) => cause }).pipe(Effect.orDie);
         const oauth = legacy.auth.methods.find((method) => method.type === "oauth" && method.authorize);
         if (oauth?.authorize) {
-            yield* context.integration.transform((draft) => {
-                if (!draft.get(PROVIDER_ID))
+            yield* context.integration.transform((editor) => {
+                if (!editor.get(PROVIDER_ID))
                     return;
-                draft.method.update({
+                editor.method.update({
                     integrationID: PROVIDER_ID,
                     method: {
                         id: METHOD_ID,
