@@ -27,16 +27,7 @@
     "@opencode-ai/plugin": "^1.18.33",
     "effect": "4.0.0-beta.83"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "^1.0.150"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.33",
     "@opencode-ai/sdk": "^1.18.33",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.2",
