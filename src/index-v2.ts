@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai"
 import type { Plugin } from "@opencode/plugin"
 import LegacyPlugin from "./index.js"
-import { syncActiveAccountToOpenCode } from "./auth-sync.js"
+import { syncActiveAccountToOpenCode, syncActiveAccountToOpenCodeV2 } from "./auth-sync.js"
 
 const PROVIDER_ID = "openai"
 
@@ -55,6 +55,7 @@ const plugin = {
   id: "opencode-multi-auth-codex",
   setup: async (context) => {
     syncActiveAccountToOpenCode()
+    await syncActiveAccountToOpenCodeV2()
     const legacy = await legacyHooks()
     await context.aisdk.hook(
       "sdk",

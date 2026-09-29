@@ -9,6 +9,7 @@ import type { AccountCredentials } from './types.js'
 const OPENAI_ISSUER = 'https://auth.openai.com'
 const AUTH_SYNC_COOLDOWN_MS = 10_000
 const OPENCODE_AUTH_FILE = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json')
+const OPENCODE_DATABASE_FILE = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db')
 
 let lastSyncedAccess: string | null = null
 let lastSyncAt = 0
@@ -106,6 +107,57 @@ export function syncActiveAccountToOpenCode(): boolean {
     fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 })
     fs.renameSync(temporary, OPENCODE_AUTH_FILE)
     return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * OpenCode 2 migrates OAuth credentials into its SQLite database and resolves
+ * that record before an AI SDK hook runs. Bun exposes SQLite in-process, so
+ * refresh the single OpenAI credential at plugin startup as well. Node-based
+ * tests and the dashboard CLI intentionally skip this Bun-only operation.
+ */
+export async function syncActiveAccountToOpenCodeV2(): Promise<boolean> {
+  if (process.env.OPENCODE_MULTI_AUTH_SKIP_NATIVE_SYNC === '1' || !process.versions.bun) return false
+
+  const store = loadStore()
+  const account = store.activeAlias ? store.accounts[store.activeAlias] : undefined
+  if (!account?.accessToken || !account.refreshToken || !account.expiresAt) return false
+
+  try {
+    const sqliteSpecifier = 'bun:sqlite'
+    const sqlite: any = await import(sqliteSpecifier)
+    const database = new sqlite.Database(OPENCODE_DATABASE_FILE)
+    try {
+      const credential: any = database
+        .query("SELECT id, value FROM credential WHERE integration_id = 'openai'")
+        .get()
+      if (!credential?.id || typeof credential.value !== 'string') return false
+
+      const current = JSON.parse(credential.value)
+      const currentExpiry = typeof current?.expires === 'number' ? current.expires : 0
+      if (currentExpiry >= account.expiresAt) return false
+
+      const value = {
+        ...current,
+        type: 'oauth',
+        methodID: current.methodID || 'chatgpt-browser',
+        access: account.accessToken,
+        refresh: account.refreshToken,
+        expires: account.expiresAt,
+        metadata: {
+          ...(current.metadata || {}),
+          ...(account.accountId ? { accountID: account.accountId } : {})
+        }
+      }
+      database
+        .query("UPDATE credential SET value = ?, time_updated = ? WHERE id = ? AND integration_id = 'openai'")
+        .run(JSON.stringify(value), Date.now(), credential.id)
+      return true
+    } finally {
+      database.close()
+    }
   } catch {
     return false
   }
