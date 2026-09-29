@@ -160,6 +160,79 @@ export async function syncActiveAccountToOpenCodeV2() {
         return false;
     }
 }
+/**
+ * Writes one account's OAuth credentials into the native auth file and the
+ * OpenCode 2 SQLite credential, without the expiry guard used by the startup
+ * sync. OpenCode 2 resolves the OpenAI credential from that record on every
+ * model request, so this is what makes a per-request account rotation take
+ * effect. Safe to call repeatedly: writes are idempotent.
+ */
+export async function writeAccountCredentialsToOpenCode(account) {
+    if (process.env.OPENCODE_MULTI_AUTH_SKIP_NATIVE_SYNC === '1')
+        return false;
+    if (!account?.accessToken || !account.refreshToken || !account.expiresAt)
+        return false;
+    let wrote = false;
+    try {
+        let auth = {};
+        if (fs.existsSync(OPENCODE_AUTH_FILE))
+            auth = JSON.parse(fs.readFileSync(OPENCODE_AUTH_FILE, 'utf8'));
+        const next = {
+            ...auth,
+            openai: {
+                type: 'oauth',
+                access: account.accessToken,
+                refresh: account.refreshToken,
+                expires: account.expiresAt,
+                ...(account.accountId ? { accountId: account.accountId } : {})
+            }
+        };
+        const temporary = `${OPENCODE_AUTH_FILE}.multi-auth-${process.pid}-${Date.now()}`;
+        fs.writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
+        fs.renameSync(temporary, OPENCODE_AUTH_FILE);
+        wrote = true;
+    }
+    catch {
+        // Non-fatal: the SQLite credential below is what OpenCode 2 uses.
+    }
+    if (!process.versions.bun)
+        return wrote;
+    try {
+        const sqliteSpecifier = 'bun:sqlite';
+        const sqlite = await import(sqliteSpecifier);
+        const database = new sqlite.Database(OPENCODE_DATABASE_FILE);
+        try {
+            const credential = database
+                .query("SELECT id, value FROM credential WHERE integration_id = 'openai'")
+                .get();
+            if (!credential?.id || typeof credential.value !== 'string')
+                return wrote;
+            const current = JSON.parse(credential.value);
+            const value = {
+                ...current,
+                type: 'oauth',
+                methodID: current.methodID || 'chatgpt-browser',
+                access: account.accessToken,
+                refresh: account.refreshToken,
+                expires: account.expiresAt,
+                metadata: {
+                    ...(current.metadata || {}),
+                    ...(account.accountId ? { accountID: account.accountId } : {})
+                }
+            };
+            database
+                .query('UPDATE credential SET value = ?, time_updated = ? WHERE id = ? AND integration_id = \'openai\'')
+                .run(JSON.stringify(value), Date.now(), credential.id);
+            return true;
+        }
+        finally {
+            database.close();
+        }
+    }
+    catch {
+        return wrote;
+    }
+}
 export async function syncAuthFromOpenCode(getAuth) {
     const now = Date.now();
     if (now - lastSyncAt < AUTH_SYNC_COOLDOWN_MS)

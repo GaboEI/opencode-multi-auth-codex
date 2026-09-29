@@ -1,4 +1,5 @@
 import type { Auth } from '@opencode-ai/sdk';
+import type { AccountCredentials } from './types.js';
 /**
  * OpenCode 2 verifies the native OpenAI credential before the AI SDK hook can
  * replace its fetch. Keep that credential aligned with the active multi-auth
@@ -14,5 +15,13 @@ export declare function syncActiveAccountToOpenCode(): boolean;
  * tests and the dashboard CLI intentionally skip this Bun-only operation.
  */
 export declare function syncActiveAccountToOpenCodeV2(): Promise<boolean>;
+/**
+ * Writes one account's OAuth credentials into the native auth file and the
+ * OpenCode 2 SQLite credential, without the expiry guard used by the startup
+ * sync. OpenCode 2 resolves the OpenAI credential from that record on every
+ * model request, so this is what makes a per-request account rotation take
+ * effect. Safe to call repeatedly: writes are idempotent.
+ */
+export declare function writeAccountCredentialsToOpenCode(account: AccountCredentials): Promise<boolean>;
 export declare function syncAuthFromOpenCode(getAuth: () => Promise<Auth>): Promise<void>;
 //# sourceMappingURL=auth-sync.d.ts.map

@@ -13,6 +13,7 @@ configurable routing, limit visibility, and failure recovery.
 ## Documentation map
 
 - `README.md` -> primary operator and developer documentation for current behavior.
+- `docs/OPENCODE_V2_COMPAT.md` -> OpenCode 2 port: 2.0.19 credential-rotation fix, build/deploy and activation.
 - `docs/ADMIN_MERGE_BRIEF.md` -> concise upstream/admin review summary.
 - `docs/PHASE_H_VALIDATION.md` -> final validation report (current readiness reference).
 - `codextesting.md` -> live/manual testing runbook.
