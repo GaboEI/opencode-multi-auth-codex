@@ -61,7 +61,6 @@ const plugin = define({
 
     if (oauth?.authorize) {
       yield* context.integration.transform((editor) => {
-        if (!editor.get(PROVIDER_ID)) return
         editor.method.update({
           integrationID: PROVIDER_ID,
           method: {

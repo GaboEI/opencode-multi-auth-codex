@@ -25,8 +25,6 @@ const plugin = define({
         const oauth = legacy.auth.methods.find((method) => method.type === "oauth" && method.authorize);
         if (oauth?.authorize) {
             yield* context.integration.transform((editor) => {
-                if (!editor.get(PROVIDER_ID))
-                    return;
                 editor.method.update({
                     integrationID: PROVIDER_ID,
                     method: {
