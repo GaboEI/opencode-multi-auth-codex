@@ -1,5 +1,10 @@
 # opencode-multi-auth-codex
 
+> **Fork note (GaboEI).** This fork carries the OpenCode 2 compatibility port,
+> including the `2.0.19` credential-rotation fix on branch
+> `codex/opencode-v2-port`. See `docs/OPENCODE_V2_COMPAT.md` for the root cause,
+> the fix and the build/deploy steps.
+
 Open-source account routing and reliability tooling for OpenCode's Codex OAuth
 integration. It provides local session controls, a localhost dashboard,
 configurable routing, limit visibility, and failure recovery.
