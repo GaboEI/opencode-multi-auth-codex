@@ -780,6 +780,29 @@ const HTML = `<!doctype html>
       .lvl.info { background: rgba(110, 231, 255, 0.14); color: #6ee7ff; }
       .lvl.warn { background: rgba(255, 180, 84, 0.16); color: #ffb454; }
       .lvl.error { background: rgba(255, 107, 107, 0.18); color: #ff6b6b; }
+      .evt {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 6px;
+        display: inline-block;
+        white-space: nowrap;
+      }
+      .evt.error { background: rgba(255, 107, 107, 0.18); color: #ff6b6b; }
+      .evt.rate { background: rgba(255, 180, 84, 0.18); color: #ffb454; }
+      .evt.token { background: rgba(110, 231, 255, 0.14); color: #6ee7ff; }
+      .evt.limits { background: rgba(55, 211, 153, 0.16); color: #37d399; }
+      .evt.sync { background: rgba(160, 160, 255, 0.16); color: #b3b3ff; }
+      .evt.state { background: rgba(120, 170, 255, 0.16); color: #8ab4ff; }
+      .evt.info { background: rgba(255, 255, 255, 0.08); color: var(--muted); }
+      .acct {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        display: inline-block;
+        white-space: nowrap;
+      }
       .logs-empty {
         padding: 14px;
         color: var(--muted);
@@ -1076,7 +1099,7 @@ const HTML = `<!doctype html>
         <div class="logs-table-wrap">
           <table class="logs-table">
             <thead>
-              <tr><th>Time</th><th>Level</th><th>Message</th></tr>
+              <tr><th>Time</th><th>Level</th><th>Event</th><th>Account</th><th>Message</th></tr>
             </thead>
             <tbody id="logRows"></tbody>
           </table>
@@ -1934,23 +1957,88 @@ const HTML = `<!doctype html>
         return level === 'warn' || level === 'error' ? level : 'info'
       }
 
+      function knownAliases() {
+        if (latestState && Array.isArray(latestState.accounts)) {
+          return latestState.accounts.map((account) => account.alias).filter(Boolean)
+        }
+        return []
+      }
+
+      function extractAccount(message) {
+        const aliases = knownAliases()
+        for (const alias of aliases) {
+          if (alias && message.indexOf(alias) !== -1) return alias
+        }
+        const open = message.lastIndexOf('(')
+        const close = open === -1 ? -1 : message.indexOf(')', open)
+        if (open !== -1 && close > open) {
+          const candidate = message.slice(open + 1, close).trim()
+          if (candidate && candidate.length <= 32 && candidate.indexOf(' ') === -1) return candidate
+        }
+        return ''
+      }
+
+      function classifyEvent(message, level) {
+        const text = message.toLowerCase()
+        if (level === 'error' || text.indexOf('error') !== -1 || text.indexOf('failed') !== -1 || text.indexOf('failure') !== -1) {
+          return { label: 'error', cls: 'error' }
+        }
+        if (text.indexOf('rate-limited') !== -1 || text.indexOf('rate limit') !== -1 || text.indexOf('quota') !== -1 || text.indexOf('usage limit') !== -1 || text.indexOf('429') !== -1 || text.indexOf('401') !== -1) {
+          return { label: 'rate', cls: 'rate' }
+        }
+        if (text.indexOf('token') !== -1 || text.indexOf('oauth') !== -1 || text.indexOf('auth.json') !== -1) {
+          return { label: 'token', cls: 'token' }
+        }
+        if (text.indexOf('limit') !== -1) {
+          return { label: 'limits', cls: 'limits' }
+        }
+        if (text.indexOf('sync') !== -1) {
+          return { label: 'sync', cls: 'sync' }
+        }
+        if (text.indexOf('enabled') !== -1 || text.indexOf('disabled') !== -1 || text.indexOf('switch') !== -1 || text.indexOf('force') !== -1) {
+          return { label: 'state', cls: 'state' }
+        }
+        if (level === 'warn') return { label: 'warn', cls: 'rate' }
+        return { label: 'info', cls: 'info' }
+      }
+
+      function aliasHue(alias) {
+        let hash = 0
+        for (let i = 0; i < alias.length; i += 1) hash = (hash * 31 + alias.charCodeAt(i)) % 360
+        return hash
+      }
+
+      function accountChip(alias) {
+        if (!alias) return '<span class="acct" style="color: var(--muted);">--</span>'
+        const hue = aliasHue(alias)
+        return \`<span class="acct" style="background: hsla(\${hue}, 70%, 55%, 0.16); color: hsl(\${hue}, 85%, 72%);">\${escapeHtml(alias)}</span>\`
+      }
+
       function renderLogs() {
         const term = logSearchTerm.trim().toLowerCase()
-        const filtered = logEntries.filter((entry) => {
+        const enriched = logEntries.map((entry) => {
+          const account = extractAccount(entry.message)
+          const event = classifyEvent(entry.message, entry.level)
+          return { ...entry, account, event }
+        })
+        const filtered = enriched.filter((entry) => {
           if (logLevelFilter !== 'all' && entry.level !== logLevelFilter) return false
-          if (term && entry.message.toLowerCase().indexOf(term) === -1 && entry.time.toLowerCase().indexOf(term) === -1) return false
+          if (term) {
+            const haystack = (entry.message + ' ' + entry.account + ' ' + entry.event.label + ' ' + entry.time).toLowerCase()
+            if (haystack.indexOf(term) === -1) return false
+          }
           return true
         })
-        if (logsCount) logsCount.textContent = \`\${filtered.length} de \${logEntries.length} líneas\`
+        if (logsCount) logsCount.textContent = \`\${filtered.length} de \${enriched.length} líneas\`
         if (logsEmpty) {
           logsEmpty.style.display = filtered.length ? 'none' : 'block'
-          logsEmpty.textContent = logEntries.length ? 'Sin resultados para el filtro.' : 'No logs yet.'
+          logsEmpty.textContent = enriched.length ? 'Sin resultados para el filtro.' : 'No logs yet.'
         }
         if (!logRows) return
         logRows.innerHTML = filtered.map((entry) => {
           const level = normalizeLevel(entry.level)
           const time = entry.time ? escapeHtml(formatLogTime(entry.time)) : '--:--:--'
-          return \`<tr class="log-row \${level}"><td class="log-time">\${time}</td><td class="log-level"><span class="lvl \${level}">\${escapeHtml(entry.level)}</span></td><td class="log-msg">\${escapeHtml(entry.message)}</td></tr>\`
+          return \`<tr class="log-row \${level}"><td class="log-time">\${time}</td><td class="log-level"><span class="lvl \${level}">\${escapeHtml(entry.level)}</span></td><td><span class="evt \${entry.event.cls}">\${escapeHtml(entry.event.label)}</span></td><td class="log-account">\${accountChip(entry.account)}</td><td class="log-msg">\${escapeHtml(entry.message)}</td></tr>\`
         }).join('')
       }
 
