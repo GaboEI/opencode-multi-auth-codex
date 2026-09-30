@@ -47,8 +47,9 @@ const plugin = {
                     const rotation = await getNextAccount({}, {
                         model: ctx?.body?.model ?? ctx?.model?.id,
                     });
-                    if (!rotation)
-                        return ctx;
+                    if (!rotation) {
+                        throw new Error("[multi-auth] No available enabled account for OpenAI request; refusing to reuse stale OpenCode credential");
+                    }
                     const { account, token } = rotation;
                     await writeAccountCredentialsToOpenCode(account);
                     const accountId = account.accountId ?? getAccountIdFromToken(token);
@@ -58,6 +59,7 @@ const plugin = {
                 }
                 catch (error) {
                     console.warn(`[multi-auth] request rotation failed: ${error}`);
+                    throw error;
                 }
                 return ctx;
             });
