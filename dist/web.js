@@ -623,17 +623,115 @@ const HTML = `<!doctype html>
         align-items: center;
         gap: 12px;
       }
-      .log-box {
-        background: #12171d;
-        border-radius: 12px;
-        padding: 12px;
+      .logs-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .log-search {
+        background: #0d1218;
         border: 1px solid var(--border-soft);
+        color: #d6dde8;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        min-width: 180px;
+      }
+      .log-filters {
+        display: flex;
+        gap: 4px;
+      }
+      .log-filter {
+        background: transparent;
+        border: 1px solid var(--border-soft);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 11px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .log-filter.active {
+        background: rgba(110, 231, 255, 0.12);
+        color: var(--accent-2);
+        border-color: rgba(110, 231, 255, 0.35);
+      }
+      .lvl-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .lvl-dot.info { background: #6ee7ff; }
+      .lvl-dot.warn { background: #ffb454; }
+      .lvl-dot.error { background: #ff6b6b; }
+      .logs-table-wrap {
+        background: #12171d;
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        max-height: 320px;
+        overflow: auto;
+        margin-top: 10px;
+      }
+      .logs-table {
+        width: 100%;
+        border-collapse: collapse;
         font-family: 'JetBrains Mono', monospace;
         font-size: 12px;
+      }
+      .logs-table thead th {
+        position: sticky;
+        top: 0;
+        background: #0d1218;
+        color: var(--muted);
+        text-align: left;
+        padding: 8px 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .logs-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        vertical-align: top;
         color: #d6dde8;
-        max-height: 240px;
-        overflow: auto;
-        white-space: pre-wrap;
+      }
+      .log-time {
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .log-msg {
+        word-break: break-word;
+      }
+      .log-row.error td { background: rgba(255, 107, 107, 0.07); }
+      .log-row.warn td { background: rgba(255, 180, 84, 0.06); }
+      .lvl {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 999px;
+        display: inline-block;
+      }
+      .lvl.info { background: rgba(110, 231, 255, 0.14); color: #6ee7ff; }
+      .lvl.warn { background: rgba(255, 180, 84, 0.16); color: #ffb454; }
+      .lvl.error { background: rgba(255, 107, 107, 0.18); color: #ff6b6b; }
+      .logs-empty {
+        padding: 14px;
+        color: var(--muted);
+        font-size: 12px;
+        display: none;
+      }
+      .logs-footer {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 11px;
       }
       .ag-grid {
         display: grid;
@@ -906,9 +1004,27 @@ const HTML = `<!doctype html>
             <div style="font-size: 16px; font-weight: 600;">Logs</div>
             <div class="notice" id="logPath"></div>
           </div>
-          <button class="secondary" id="refreshLogsBtn">Refresh logs</button>
+          <div class="logs-actions">
+            <input id="logSearch" class="log-search" type="search" placeholder="Filtrar texto..." />
+            <div class="log-filters" id="logFilters">
+              <button class="log-filter active" data-level="all" type="button">All</button>
+              <button class="log-filter" data-level="info" type="button"><span class="lvl-dot info"></span>Info</button>
+              <button class="log-filter" data-level="warn" type="button"><span class="lvl-dot warn"></span>Warn</button>
+              <button class="log-filter" data-level="error" type="button"><span class="lvl-dot error"></span>Error</button>
+            </div>
+            <button class="secondary" id="refreshLogsBtn" type="button">Refresh logs</button>
+          </div>
         </div>
-        <pre class="log-box" id="logBox"></pre>
+        <div class="logs-table-wrap">
+          <table class="logs-table">
+            <thead>
+              <tr><th>Time</th><th>Level</th><th>Message</th></tr>
+            </thead>
+            <tbody id="logRows"></tbody>
+          </table>
+          <div class="logs-empty" id="logsEmpty">No logs yet.</div>
+        </div>
+        <div class="logs-footer" id="logsCount"></div>
       </section>
     </div>
     <div class="modal-shell" id="createAccountModal" aria-hidden="true">
@@ -961,7 +1077,11 @@ const HTML = `<!doctype html>
       const tagInput = document.getElementById('tagInput')
       const sortSelect = document.getElementById('sortSelect')
       const clearFiltersBtn = document.getElementById('clearFiltersBtn')
-      const logBox = document.getElementById('logBox')
+      const logRows = document.getElementById('logRows')
+      const logsEmpty = document.getElementById('logsEmpty')
+      const logsCount = document.getElementById('logsCount')
+      const logSearch = document.getElementById('logSearch')
+      const logFilterBtns = Array.from(document.querySelectorAll('.log-filter'))
       const refreshLogsBtn = document.getElementById('refreshLogsBtn')
       const logPathEl = document.getElementById('logPath')
       const openAccountModalBtn = document.getElementById('openAccountModalBtn')
@@ -1726,11 +1846,82 @@ const HTML = `<!doctype html>
         }, nextInterval)
       }
 
+      let logEntries = []
+      let logLevelFilter = 'all'
+      let logSearchTerm = ''
+
+      function parseLogLine(line) {
+        const firstSpace = line.indexOf(' ')
+        if (firstSpace > 0 && line.charCodeAt(firstSpace + 1) === 91) {
+          const close = line.indexOf(']', firstSpace)
+          if (close > firstSpace) {
+            return {
+              time: line.slice(0, firstSpace),
+              level: line.slice(firstSpace + 2, close).toLowerCase(),
+              message: line.slice(close + 1).trim()
+            }
+          }
+        }
+        return { time: '', level: 'info', message: line }
+      }
+
+      function formatLogTime(value) {
+        const date = new Date(value)
+        if (Number.isNaN(date.getTime())) return value
+        const pad = (part) => String(part).padStart(2, '0')
+        return \`\${pad(date.getHours())}:\${pad(date.getMinutes())}:\${pad(date.getSeconds())}\`
+      }
+
+      function normalizeLevel(level) {
+        return level === 'warn' || level === 'error' ? level : 'info'
+      }
+
+      function renderLogs() {
+        const term = logSearchTerm.trim().toLowerCase()
+        const filtered = logEntries.filter((entry) => {
+          if (logLevelFilter !== 'all' && entry.level !== logLevelFilter) return false
+          if (term && entry.message.toLowerCase().indexOf(term) === -1 && entry.time.toLowerCase().indexOf(term) === -1) return false
+          return true
+        })
+        if (logsCount) logsCount.textContent = \`\${filtered.length} de \${logEntries.length} líneas\`
+        if (logsEmpty) {
+          logsEmpty.style.display = filtered.length ? 'none' : 'block'
+          logsEmpty.textContent = logEntries.length ? 'Sin resultados para el filtro.' : 'No logs yet.'
+        }
+        if (!logRows) return
+        logRows.innerHTML = filtered.map((entry) => {
+          const level = normalizeLevel(entry.level)
+          const time = entry.time ? escapeHtml(formatLogTime(entry.time)) : '--:--:--'
+          return \`<tr class="log-row \${level}"><td class="log-time">\${time}</td><td class="log-level"><span class="lvl \${level}">\${escapeHtml(entry.level)}</span></td><td class="log-msg">\${escapeHtml(entry.message)}</td></tr>\`
+        }).join('')
+      }
+
       async function refreshLogs() {
         const logs = await api('/api/logs')
         logPathEl.textContent = logs.path ? \`Path: \${logs.path}\` : ''
-        logBox.textContent = (logs.lines || []).join('\\n') || 'No logs yet.'
+        logEntries = (logs.lines || []).map(parseLogLine)
+        renderLogs()
       }
+
+      logFilterBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          logLevelFilter = btn.dataset.level || 'all'
+          logFilterBtns.forEach((other) => other.classList.toggle('active', other === btn))
+          renderLogs()
+        })
+      })
+
+      if (logSearch) {
+        logSearch.addEventListener('input', () => {
+          logSearchTerm = logSearch.value || ''
+          renderLogs()
+        })
+      }
+
+      setInterval(() => {
+        if (document.hidden) return
+        refreshLogs().catch(() => {})
+      }, 5000)
 
       async function refreshState() {
         const state = await api('/api/state')
@@ -2259,7 +2450,8 @@ const HTML = `<!doctype html>
         if (!document.hidden) refreshState().catch(() => {})
       })
       refreshLogs().catch(() => {
-        logBox.textContent = 'No logs yet.'
+        logEntries = []
+        renderLogs()
       })
     </script>
   </body>
